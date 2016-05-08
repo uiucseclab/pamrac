@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
+    android:keyWidth="50%p"
+    android:horizontalGap="0px"
+    android:verticalGap="0px"
+    android:keyHeight="40dp"
+    >
+
+    <Row>
+        <Key android:keyOutputText="heyitsausername" android:codes="48" android:keyLabel="username" android:keyEdgeFlags="left"/>
+        <Key android:keyOutputText="heyitsapassword" android:codes="49" android:keyLabel="password" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <Row>
+        <Key android:keyOutputText="first special" android:codes="50" android:keyLabel="special1" android:keyEdgeFlags="left"/>
+        <Key android:keyOutputText="2nd special" android:codes="51" android:keyLabel="special2" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <Row>
+        <Key android:keyOutputText="3rd special" android:codes="52" android:keyLabel="special3" android:keyEdgeFlags="left"/>
+        <Key android:keyOutputText="4th special" android:codes="53" android:keyLabel="special4" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <Row>
+        <Key android:keyOutputText="5th special" android:codes="54" android:keyLabel="special5" android:keyEdgeFlags="left"/>
+        <Key android:keyOutputText="6th special" android:codes="55" android:keyLabel="special6" android:keyEdgeFlags="right"/>
+    </Row>
+
+    <Row>
+        <Key android:keyOutputText="Keyboard select" android:keyWidth="33%p" android:codes="56" android:keyLabel="Keyboard select" android:keyEdgeFlags="left"/>
+        <Key android:keyOutputText="toggle stores lock" android:keyWidth="33%p" android:codes="57" android:keyLabel="toggle stores lock"/>
+        <Key android:keyOutputText="Select site" android:keyWidth="33%p" android:codes="58" android:keyLabel="Select site" android:keyEdgeFlags="right"/>
+    </Row>
+
+</Keyboard>

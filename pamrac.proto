@@ -1,0 +1,603 @@
+package pamrac;
+
+option java_package = "edu.illinois.cs.salmon.fredshoppinglist";
+option java_outer_classname = "PAMRACProto";
+
+//NOTE: all fingerprints are the first 16 bytes of sha256(pubkeydata),
+//      where pubkey data is the contents of a .pub file that you would
+//      feed into mbedtls_pk_parse_public_keyfile().
+
+message PAMRACMessage
+{
+	enum Type
+	{
+		INIT_BLOB_REQUEST = 0;
+		INIT_BLOB_RESPONSE = 1;
+		BLOB_REQUEST = 2;
+		BLOB_RESPONSE = 3;
+		INIT_BLOB_UPLOAD = 4; //NOTE: no message defined; just here in the enum.
+		BLOB_UPLOAD_NONCE = 5; //NOTE corresponds to a NonceResponse
+		BLOB_UPLOAD = 6;
+		BLOB_UPLOAD_RESULT = 7;
+		INIT_SHARE_UPLOAD = 8; //NOTE: no message defined; just here in the enum.
+		SHARE_UPLOAD_NONCE = 9; //NOTE corresponds to a NonceResponse
+		SHARE_UPLOAD = 10;
+		SHARE_UPLOAD_RESULT = 11;
+		INIT_SHARE_REQUEST = 12; //NOTE: no message defined; just here in the enum.
+		SHARE_REQUEST_NONCE = 13; //NOTE corresponds to a NonceResponse
+		SHARE_REQUEST = 14;
+		KEY_SHARE = 15;
+		INIT_SHARE_LIST_REQUEST = 16; //NOTE: no message defined; just here in the enum.
+		SHARE_LIST_REQUEST_NONCE = 17; //NOTE corresponds to a NonceResponse
+		SHARE_LIST_REQUEST = 18;
+		SHARE_LIST = 19;
+		
+		CONNECT_TO_NEW_STORE = 20;
+		NEW_STORE_CONNECT_RESULT = 21;
+		
+		CONNECT_TO_FRIEND_SERVER = 22;
+		CONNECT_FRIEND_SERVER_RESULT = 23;
+		
+		NOT_AUTHORIZED = 24; //NOTE: no message defined, just here in the enum. Used any
+							//time the client has made a request that hasn't broken in any
+							//way (sig verified correctly and all), but our logic says they
+							//aren't allowed to do/get what they're asking for.
+	}
+	
+	//A pretty painless way to make it easy to extend the server to hosting multiple users.
+	//Just about every interaction with the server has an implicit ", and you are doing this with the files
+	//of the user whom you host". So, to allow the server to host multiple users, we can instead have every 
+	//message be explicit about which user we're talking about, by specifying the user's fingerprint.
+	optional bytes user_fingerprint = 1;
+	
+	//Which of these optional fields below should we expect to actually be present?
+	required Type type = 2;
+	
+	optional InitBlobRequest init_blob_request = 3;
+	optional InitBlobResponse init_blob_response = 4;
+	optional BlobRequest blob_request = 5;
+	optional BlobResponse blob_response = 6;
+	optional BlobUpload blob_upload = 7;
+	optional BlobUploadResult blob_upload_result = 8;
+	optional NonceResponse nonce_response = 9;
+	optional ShareUpload share_upload = 10;
+	optional ShareUploadResult share_upload_result = 11;
+	optional ShareRequest share_request = 12;
+	optional KeyShare key_share = 13;
+	optional ShareListRequest share_list_request = 14;
+	optional ShareList share_list = 15;
+	
+	
+	optional ConnectToNewStore connect_to_new_store = 16;
+	optional NewStoreConnectResult new_store_connect_result = 17;
+	
+	optional ConnectFriendServerResult connect_friend_server_result = 18;
+	
+	//optional InitShareRequest init_share_request ; empty message; type only
+	//optional InitBlobUpload init_blob_upload ; empty message; type only
+	//optional InitShareUpload empty message; type only
+	//optional InitShareListRequest init_share_list_request ;  empty message; type only
+	
+	//NOTE is no NonceResponse optional BlobUploadNonce blob_upload_nonce ;
+	//NOTE is now NonceResponse optional ShareUploadNonce share_upload_nonce;
+	//NOTE is now NonceResponse optional ShareRequestNonce init_share_response;
+	//NOTE is now NonceResponse optional ShareListRequestNonce init_share_list_response;
+	
+	//If client is supposed to be including a sig in this message, and thinks that
+	//the server probably doesn't have the public key, include it here.
+	optional bytes client_pubkey = 19;
+}
+//for the few different exchanges that want the server to respond with just a nonce
+message NonceResponse
+{
+	required bytes nonce = 1;
+}
+
+
+
+
+
+
+
+
+
+
+//These BlobFiles are stored on the server in /var/lib/pamrac/blobs.
+
+message BlobFile //each file the server stores is just one of these!
+{
+	//32 bytes of salt. if this is present, the ciphertext is encrypted by a key derived 
+	//from PASSWORD and this salt. if not present, it_s just by the MASTER key. (That MASTER key is 
+	//stored inside of the "masterkey" file, which is encrypted with a PASSWORD-derived key.)
+	optional bytes salt = 1;
+	
+	//starts at 1, server should maintain a master "next version number" for all blobs
+	required int32 version = 2;
+	required bytes aes_init_vector = 3;
+	required bytes inner_blob_ciphertext = 4; //AES256 encrypted ciphertext of an InnerBlob message
+}
+
+message InnerBlob //(all of this is encrypted, in blob.inner_blob_ciphertext)
+{
+	//because files are stored under a hash of the site name, we need to keep track of what the blob
+	//is actually for!!!
+	required string filename = 1;
+	
+	message KeyValue
+	{
+		required string name = 1;
+		required string value = 2;
+	}
+	
+	repeated KeyValue fields = 2; //username = fred, password = weakpass, etc
+}
+
+//The AES encryption inside a MasterKeyPasswordedFile is done with an AES-256 key derived 
+//from the master PASSWORD.
+//The Android client needs to have this exact same MasterKeyPasswordedFile file (in order to 
+//retrieve MASTER, in order to decrypt non-irretrievable blobs). 
+//This masterkey_passworded file should never need to change, 
+//except if you needed to reconstruct MASTER of course!
+message MasterKeyPasswordedFile
+{
+	required bytes salt = 1; //for deriving the key that encrypts master_key_ciphertext, from PASSWORD
+	required bytes aes_init_vector = 2;
+	required bytes inner_ciphertext = 3;
+}
+
+//THE CROWN JEWELS!!! If you can see the inside of this, 
+//you have the ability to do EVERYTHING that the user is supposed to be able to do.
+message InnerPassworded
+{
+	//AES key, recoverable blobs are encrypted with this one. Is retrieved when combining shares.
+	required bytes master_key = 1; 
+	
+	//For picking out a specific blob to extract, and for naming new blobs. Used on both normal
+	//AND irretrievable blobs, since it is not retrievable.
+	required bytes filenamesalt = 2;
+	
+	//So we can display to the user a list of all available sites when they enter PASSWORD into the app.
+	//(Which can then be hashed together with filenamesalt to get the blob that that site's passwords 
+	//can be found in). Does not exist anywhere else (is not retrievable).
+	repeated string site_names = 3;
+	
+	//The DOWNLOADSECRET. Server also has this, and it is part of what is recovered when combining shares.
+	//Prove knowledge of it to convince the server to hand you blobs.
+	required bytes downloadsecret = 4;
+	
+	//The private key from the keypair that is the user's identity to others in the system.
+	//Does not exist anywhere else (is not retrievable).
+	required bytes private_key = 5;
+}
+
+//The AES encryption inside a MasterKeyRetrievableFile is done with an AES-256 key that is the XOR of:
+//====>the "initiator mask": a random 32 bytes that all of the initiators have.
+//====>a random 32 bytes that is _the thing_ that is shared. This random secret does not exist in any 
+//		single place (even encrypted); it exists only as shares, and can only be accessed by 
+//		assembling enough of them.
+//This MasterKeyRetrievableFile is also given to any friends who are initiators.
+//NOTE inner_retrievable_ciphertext is now encrypted by (the shared secret XOR the initiator mask). 
+//NOTE Each initiator has the initiator mask. Basically: I don't want stealing MasterKeyRetrievableFile 
+//NOTE (from bob's server; maybe bob's server itself is the adversary) + social-engineering enough 
+//NOTE NON-initiator shares to be enough to retrieve.
+message MasterKeyRetrievableFile
+{
+	required int64 timestamp = 1; //NOTE: although timestamp is also in the KeyShare message, which this 
+						//can be a part of, you will also have a MasterKeyRetrievableFile stored just 
+						//by itself -- not inside a KeyShare -- on the user's own server.
+						//so, it's ok/unavoidable that it's duplicated when inside a KeyShare.
+	
+	required bytes aes_init_vector = 2;
+	required bytes inner_retrievable_ciphertext = 3; //encryption of InnerRetrievable
+}
+message InnerRetrievable
+{
+	required bytes master_key = 1; //the 32 bytes of the MASTER AES256 key.
+	
+	
+	
+	//NOTE we don't need this now! i mean, they are only decrypting everything, and not creating new files.
+	//since the blobs now contain the site names inside the encrypted part, they can definitely figure out 
+	//the sites. required bytes filenamesalt; //need to be able to match name
+	
+	
+	
+	required bytes DOWNLOADSECRET = 2;//need this to be able to download blobs from the server 
+								//(in case we don't even have those)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+message InitBlobRequest
+{
+	//xor of all the cached_blobs.blob_hash fields from the BlobRequest that we would send 
+	//if it turns out any are different. (if this xor matches, we can skip sending all of those hashes).
+	//(all 0s if we don't have any blobs at all).
+	required bytes all_hash_xor = 1;
+}
+
+message InitBlobResponse
+{
+	required bool xor_matches = 1; //if the xor they sent matches what we have, tell them, and then they
+						//can just stop the process and know they are up to date.
+	
+	optional bytes nonce = 2; //if the xor didn't match, they'll need to do an actual request.
+					//this is the nonce they will use to prove knowledge of DOWNLOADSECRET.
+}
+
+message BlobRequest
+{
+	message BlobHash
+	{
+		//this is the name as stored on the server: base64(sha256(name~filenamesalt)) for retrievable, 
+		//base64(sha-256("www.secret.com"~filenamesalt~PASSWORD)) for irretrievable
+		required string blob_name = 1;
+		
+		//a hash of the contents of the blob file (which is a serialized BlobFile)
+		required bytes blob_hash = 2;
+	}
+	//we're telling the server that we already have these versions of these blobs
+	repeated BlobHash cached_blobs = 1; 
+	
+	//prove that you know DOWNLOADSECRET by sending sha256(DOWNLOADSECRET~proof_nonce) (proof_nonce having 
+	//been supplied by the server's InitBlobResponse). (so that not just anyone can download the blobs).
+	required bytes downloadsecret_proof = 2;
+	//nonce for downloadsecret_proof
+	required bytes proof_nonce = 3;
+}
+
+message BlobResponse
+{
+	message NamedBlobFile
+	{
+		required string name = 1; //this is the hashed name, i.e. the actual file name in the filesystem
+		required BlobFile blob = 2;
+	}
+	
+	//each entry here either was not listed among the BlobHash's, or its hash differed. (basic cache logic)
+	repeated NamedBlobFile new_blobs = 1;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//message InitBlobUpload NOTE type only, no content
+//message BlobUploadNonce NOTE see NonceResponse
+message BlobUpload
+{
+	//base64(sha256(sitename~filenamesalt)); the string under which the file is actually stored
+	required string hashed_filename = 1;
+	
+	//Whole blob file to be uploaded.
+	//NOTE: If version field is not > the server's current version, then the upload will fail. However, only tell 
+	//the client that if proof of ownership of their private key checks out, so that we don't leak version info.
+	required BlobFile blob = 2;
+	
+	required bytes nonce = 3; //echo back the nonce the server gave
+	optional bytes signature = 4; //prove that you know your private key: sign:
+						//(hashed_filename~blob.[IFPRESENT(salt)~toString(version)~initvec~ciphertext]~nonce)
+}
+
+message BlobUploadResult
+{
+	required bool verification_ok = 1; //did their signature check out?
+	optional bool upload_successful = 2;
+	//if upload failed due to version not high enough, here's the ver# the server had
+	optional int32 server_version = 3;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//message InitShareListRequest NOTE type only, no content
+//message InitShareListNonceResponse NOTE see NonceResponse
+message ShareListRequest
+{
+	required bytes requester_fingerprint = 1;
+	required bytes nonce = 2;
+	optional bytes signature = 3; //requestor's sig of (req_fp~nonce)
+}
+//If the ShareListRequest is ok and they're authorized (are an initiator), respond with a ShareList.
+//If they are NOT authorized (not an initiator), respond with an empty message of type NOT_AUTHORIZED.
+
+//NOTE: ShareList is both a file type, and a message that can be sent (in response to ShareListRequest).
+//this should be stored at the client (of course) and the server. don't actively distribute to other servers,
+//but give it out to anyone who can prove ownership of a keypair that is in the list of share INITIATORS.
+message ShareList
+{
+	required int64 timestamp = 1; //should match all the timestamps of the most recently distributed shares
+	required int32 threshold = 2; //the 'k' in "k out of n secret sharing"
+	
+	message ShareRecipient
+	{
+		optional string nickname = 1;
+		required bytes fingerprint = 2;
+		required bool initiator = 3;
+	}
+	
+	repeated ShareRecipient recipients = 3;
+	
+	
+	//signature with originator's private key of:
+	//(toString(timestamp), toString(threshold), <IFPRESENT(nickname), fprint, initiator ? 1 : 0>, ... )
+	//NOTE those 1, 0 are ASCII. They are 1 byte.
+	optional bytes signature = 4;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//Originator, owner, encryptedTo: Say Bob has done the keysharing, and currently the shares are just
+//all on his server. Two shared-to friends are Alice and Carol. Carol's share on Bob's server would have
+//originator: Bob
+//owner: Carol
+//encryptedTo: Carol
+//
+//Now say Alice is going around gathering shares. She gets Carol to agree to provide Carol's share.
+//Carol retrieves her share from Bob's server, reencrypts it to Alice, and posts it to her own server.
+//Now that share has:
+//originator: Bob 
+//owner: Carol 
+//encryptedTo: Alice
+message ShareID
+{
+	required bytes originator_fingerprint = 1;
+	required bytes owner_fingerprint = 2;
+	required bytes encrypted_to_fingerprint = 3;
+}
+
+
+
+
+
+//message InitShareRequest NOTE type only, no content
+//message ShareRequestNonce NOTE see NonceResponse
+
+//NOTE: this can either be alice asking carol for carol's share of bob, or carol asking bob for carol's 
+//share of bob (since this is a little confusing: the fingerprint of the outer message, for multi-user 
+//servers, is the fingerprint of the user whose server is holding the share we're asking for. so, in our 
+//examples where alice, bob are the request{er,ee}, this outer fingerprint would be carol. if carol was 
+//getting her own share from bob, it would instead be carol, bob, bob.
+message ShareRequest
+{
+	//(the encrypted_to_fp must be the fp of the person requesting; 
+	//i.e. the key the sig should be done with).
+	required ShareID share_id = 1;
+	
+	//echo back the nonce the server gave us in the InitShareNonce message
+	required bytes nonce = 2;
+	
+	//signature with requester private key of (originator_fp~owner_fp~encrypted_to_fp~nonce)
+	optional bytes signature = 3;
+}
+
+//Retrieval shares are stored at:
+//     /var/lib/pamrac/keyshare/[originator_fp]-[owner_fp]-[currently_encrypted_to_fp]
+//Bob's server storing Carol's share of Bob, currently encrypted to Carol: bobfp-carolfp-carolfp.
+//Then, Carol gets that share, reencrypts it to Alice, and stores it on Carol's server: bobfp-carolfp-alicefp.
+//The format is:
+message KeyShare
+{
+	required int64 timestamp = 1; //seconds since epoch
+	
+	//you have this in your share if you are an initiator for this person.
+	//NOTE: initiator should not give this out when giving out their share. That other person had 
+	//better just be an initiator themselves.
+	optional MasterKeyRetrievableFile masterkey_retrievable_file = 2;
+	
+	//You have this in your share if you are an initiator. It is encrypted directly to your public key. 
+	//The contents are the 32-byte initiator mask. (The MasterKeyRetrievableFile's copy of MASTER is 
+	//encrypted by the XOR of this, and the 32-byte shared secret.)
+	optional bytes encrypted_initiator_mask = 3;
+	
+	//if this is a share of bobs key stored at carol, then this is a share of the retrieval secret.
+	//it is encrypted to the public key corresponding to the fingerprint of next field. 
+	//(directly by that public key).
+	required bytes encrypted_share = 4;
+	
+	required ShareID share_id = 5;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//message InitShareUpload [empty; just a field in the enum]
+//message ShareUploadNonce NOTE see NonceResponse
+
+//client is instructing server to allow / disallow a certain someone to get a certain keyshare.
+//This can be either Bob putting a freshly rotated share of himself onto his own server, or Carol putting 
+//her Bobshare, reencrypted to Alice, on her (Carol's) server, for Alice to retrieve.
+//OR, it can be an instruction to delete that share-given-to-that-person (recall all shares are stored in 
+//files named originator_fp-owner_fp-currently_encrypted_to_fp: the revocation is saying e.g. 
+//"delete the Carol's Bobshare that is encrypted to Alice".
+message ShareUpload
+{
+	//Revoking these shares (delete corresponding files).
+	//TODO we should revoke shares with either originator OR owner OR encrypted_to fp matching ANY of the
+	//TODO corresponding fields in here. (Originator: if you were fooled into offering your share for that
+	//TODO person and want to take it back. (Or, you want to disable the sharing of your own stuff).
+	//TODO Owner/encrypted_to are basically the same; you no longer trust this person and don't want them
+	//TODO getting shares. (So, really only need to specify encrypted_to, actually).
+	repeated ShareID revoke_id = 1;
+	
+	//Add files for these shares.
+	repeated KeyShare share = 2;
+	
+	//if this is the originator initially putting the shares on their own server, they can also specify 
+	//the list here. (NOTE: this is not included in the ShareUpload signature because it already has 
+	//its own signature.)
+	optional ShareList list = 3;
+	
+	required bytes nonce = 4;
+
+	//sig is of:
+	//	for each revoke_id:
+	//		SHA256Update(revoke_id.[originator~owner~encryptedTo])
+	//	for each share:
+	//		SHA256Update(toString(share.timestamp))
+	//		if(share has a masterkey_retrievable_file)
+	//			SHA256Update(share.mkey_ret_file.[toString(timestamp)~initvec~ciphertext])
+	//		if(share has a encrypted_initiator_mask)
+	//			SHA256Update(share.encrypted_initiator_mask)
+	//		SHA256Update(share.encrypted_share)
+	//		SHA256Update(share.share_id.[originator~owner~encryptedTo])
+	//	SHA256Update(nonce)
+	//	SHA256Finish()
+	optional bytes signature = 5;
+	//NOTE don't need to sign the ShareList, because it has its own sig, and includes a timestamp which 
+	//		can be checked for equality with the shares' (also signed) timestamps.
+}
+
+message ShareUploadResult
+{
+	required bool verification_ok = 1; //did their signature check out?
+	
+	repeated ShareID ids_revoked = 2;
+	
+	repeated ShareID shares_added = 3;
+}
+
+
+
+
+
+
+
+
+//NOTE: no reason for the server to have this, other than as a backup / multi-device sync thing.
+message FriendNameMap
+{
+	message FriendNickname
+	{
+		required string name = 1; //nickname
+		
+		required bytes friend_fingerprint = 2; //fingerprint of the friend's public key 
+		required bytes friend_pubkey = 3; //the actual public key
+		required bytes friend_server_cert = 4; //cert we trust for TLS with this specific friend's server
+		
+		//last known address of the server. address[:port], e.g. 1.2.3.4, 
+		//or 1.2.3.4:8443, or fred.duckdns.org:8443
+		required string server_address = 5;
+	}
+	repeated FriendNickname friends = 1;
+	
+	required int64 timestamp = 2; //seconds since epoch
+	
+	optional bytes signature = 3; //a signature of all records with the client's private key.
+									//sig format is: 
+									//toString(timestamp) ~ 
+									//sort the 'friends' repeated field by friend_fprint. 
+									//then, for each friend, in that order:
+									//~name~friend_fprint~friend_pubkey~server_cert~server_address
+}
+
+
+
+
+
+//We have done an "init new store" on the server console, which has given us a passcode and set the
+//server to expect one of these messages. Then we go to the app, enter the server's address and the 
+//passcode, and the app sends this. If the server accepts + correctly processes this message, the password
+//store has been fully initialized.
+message ConnectToNewStore
+{
+	required string passcode = 1;
+	required bytes public_key = 2;
+	required bytes download_secret = 3;
+	optional string nickname = 4;
+	optional MasterKeyPasswordedFile encrypted_master = 5;
+}
+message NewStoreConnectResult
+{
+	required bool success = 1;
+}
+
+
+//No content, just a CONNECT_TO_FRIEND_SERVER. (Crucially, though, the Message's user_fingerprint must be set).
+//message ConnectToFriendServer
+message ConnectFriendServerResult
+{
+	required bytes user_public_key = 1; //public key of user hosted on this server whom you requested.
+							//make sure to verify that it matches the user_fingerprint you requested!
+	required bytes server_cert = 2; //this server's X.509 cert, to enable future TLS with it
+	required bytes sig_of_cert = 3; //Signature of server_cert, generated by user_public_key. If you trust
+							//that the user_fingerprint you sent legitimately belongs to your friend,
+							//and that fprint corresponds to user_public_key, and sig_of_cert is a valid
+							//sig by user_public_key of server_cert, then server_cert is safe to trust
+							//for TLS with this friend's server.
+}
